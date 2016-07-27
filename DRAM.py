@@ -30,8 +30,8 @@ glimpses=10
 batch_size=100
 enc_size = 256
 dec_size = 256
-pretrain_iters=300
-train_iters=300
+pretrain_iters=10000000
+train_iters=10000000
 learning_rate=1e-3
 eps=1e-8
 pretrain = str2bool(sys.argv[11]) #False
@@ -43,6 +43,7 @@ log_filename = sys.argv[7] #"translatedplain/classify_weird_from_20000_log.csv"
 load_file = sys.argv[8] #"translatedplain/drawmodel20000.ckpt"
 save_file = sys.argv[9] #"translatedplain/classifymodel_weird_from_20000_"
 draw_file = sys.argv[10] #"translatedplain/zzzdraw_data_5000.npy"
+start_non_restored_from_random = str2bool(sys.argv[15])
 
 
 ## BUILD MODEL ## 
@@ -211,52 +212,65 @@ train_op=optimizer.apply_gradients(grads)
 varsToTrain = []
 
 if str2bool(sys.argv[1]):
-
+    
     with tf.variable_scope("read",reuse=True):
         w = tf.get_variable("w")
         varsToTrain.append(w)
         b = tf.get_variable("b")
         varsToTrain.append(b)
 
-if str2bool(sys.argv[2]):
 
+
+if str2bool(sys.argv[2]):
+    
     with tf.variable_scope("encoder/LSTMCell",reuse=True):
         w = tf.get_variable("W_0")
         varsToTrain.append(w)
         b = tf.get_variable("B")
         varsToTrain.append(b)
+            
+
+
 
 if str2bool(sys.argv[3]):
-
+    
     with tf.variable_scope("z",reuse=True):
         w = tf.get_variable("w")
         varsToTrain.append(w)
         b = tf.get_variable("b")
         varsToTrain.append(b)
 
-if str2bool(sys.argv[4]):
 
+
+if str2bool(sys.argv[4]):
+    
     with tf.variable_scope("decoder/LSTMCell",reuse=True):
         w = tf.get_variable("W_0")
         varsToTrain.append(w)
         b = tf.get_variable("B")
         varsToTrain.append(b)
 
-if str2bool(sys.argv[5]):
 
+
+if str2bool(sys.argv[5]):
+    
     with tf.variable_scope("hidden1",reuse=True):
         w = tf.get_variable("w")
         varsToTrain.append(w)
         b = tf.get_variable("b")
         varsToTrain.append(b)
 
-if str2bool(sys.argv[6]):
 
+if str2bool(sys.argv[6]):
+    
     with tf.variable_scope("hidden2",reuse=True):
         w = tf.get_variable("w")
         varsToTrain.append(w)
         b = tf.get_variable("b")
         varsToTrain.append(b)
+
+
+
 
 
 
@@ -305,6 +319,8 @@ if pretrain:
         saver = tf.train.Saver(tf.all_variables())
         saver.restore(sess, load_file)
 
+
+
     start_time = time.clock()
     extra_time = 0
     for i in range(pretrain_iters):
@@ -317,7 +333,7 @@ if pretrain:
         reconstruction_lossses[i],_=results
         if i%100==0:
             print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
-            if i %100==0:
+            if i %1000==0:
                 start_evaluate = time.clock()
                 evaluate()
                 saver = tf.train.Saver(tf.all_variables())
@@ -349,9 +365,8 @@ if classify:
         saver.restore(sess, load_file)
 
 
-
-
-
+    if start_non_restored_from_random:
+        tf.initialize_variables(varsToTrain).run()
 
 
 
@@ -375,7 +390,7 @@ if classify:
         reward_fetched,_=results
         if i%100==0:
             print("iter=%d : Reward: %f" % (i, reward_fetched))
-            if i %100==0:
+            if i %1000==0:
                 start_evaluate = time.clock()
                 test_accuracy = evaluate()
                 saver = tf.train.Saver(tf.all_variables())
