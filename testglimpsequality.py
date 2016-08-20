@@ -14,6 +14,7 @@ tf.flags.DEFINE_string("data_dir", "", "")
 tf.flags.DEFINE_boolean("write_attn",False, "enable attention for writer")
 FLAGS = tf.flags.FLAGS
 
+
 ## MODEL PARAMETERS ## 
 
 translated = True
