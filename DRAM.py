@@ -134,6 +134,7 @@ def dense_to_one_hot(labels_dense, num_classes=10):
 
 outputs=[0] * glimpses
 h_dec_prev=tf.zeros((batch_size,dec_size))
+h_enc_prev=tf.zeros((batch_size,enc_size))
 enc_state=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
 
@@ -152,6 +153,7 @@ for glimpse in range(glimpses):
     with tf.variable_scope("write", reuse=REUSE):
         outputs[glimpse] = linear(h_dec, img_size)
     h_dec_prev=h_dec
+    h_enc_prev=h_enc
     REUSE=True
 
 with tf.variable_scope("hidden1",reuse=None):
@@ -335,7 +337,6 @@ if pretrain:
             print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
             if i %1000==0:
                 start_evaluate = time.clock()
-                evaluate()
                 saver = tf.train.Saver(tf.all_variables())
                 print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
                 extra_time = extra_time + time.clock() - start_evaluate

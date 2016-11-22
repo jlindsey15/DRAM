@@ -27,7 +27,7 @@ read_n = 5
 read_size = read_n*read_n
 z_size=10
 glimpses=10
-batch_size=1000
+batch_size=100
 enc_size = 256
 dec_size = 256
 pretrain_iters=10000000
@@ -51,6 +51,7 @@ start_non_restored_from_random = str2bool(sys.argv[15])
 REUSE=None
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
+reconstruct = tf.placeholder(tf.float32,shape=(batch_size,28*28))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 locations = tf.placeholder(tf.float32, shape=(batch_size, 2))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
@@ -162,7 +163,7 @@ for glimpse in range(glimpses):
         h_dec, dec_state = lstm_dec(z, dec_state)
 
     with tf.variable_scope("write", reuse=REUSE):
-        outputs[glimpse] = linear(h_dec, img_size)
+        outputs[glimpse] = linear(h_dec, 28*28)
     h_dec_prev=h_dec
     REUSE=True
 
@@ -190,8 +191,8 @@ def evaluate():
     for i in xrange(batches_in_epoch):
         nextX, nextY = data.next_batch(batch_size)
         if translated:
-            nextX, locs = convertTranslated(nextX)
-        feed_dict = {x: nextX, onehot_labels:nextY, locations:locs}
+            nextXTrans, locs = convertTranslated(nextX)
+            feed_dict = {x: nextXTrans, reconstruct: nextX, onehot_labels:nextY, locations: locs}
         r = sess.run(reward, feed_dict=feed_dict)
         accuracy += r
     
@@ -203,7 +204,7 @@ def evaluate():
 
 x_recons=tf.nn.sigmoid(outputs[-1])
 
-reconstruction_loss=tf.reduce_sum(binary_crossentropy(x,x_recons),1)
+reconstruction_loss=tf.reduce_sum(binary_crossentropy(reconstruct,x_recons),1)
 reconstruction_loss=tf.reduce_mean(reconstruction_loss)
 
 
@@ -337,7 +338,9 @@ if pretrain:
     for i in range(pretrain_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            xtrain, locs = convertTranslated(xtrain)
+            nextXTrans, locs = convertTranslated(xtrain)
+        
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain, locations:locs}
         
         feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs}
         results=sess.run(fetches,feed_dict)
@@ -395,8 +398,8 @@ if classify:
     for i in range(train_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            xtrain, locs = convertTranslated(xtrain)
-        feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs}
+            nextXTrans, locs = convertTranslated(xtrain)
+            feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain, locations:locs}
         results=sess.run(fetches2,feed_dict)
         reward_fetched,loc_dist_fetched, chosen_locs_fetched, _=results
         if i%100==0:

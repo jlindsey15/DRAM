@@ -52,9 +52,11 @@ REUSE=None
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
+lstm_enc = tf.nn.rnn_cell.LSTMCell(192, read_size+dec_size) # encoder Op
 locations = tf.placeholder(tf.float32, shape=(batch_size, 2))
-lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
-lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
+lstm_enc_loc = tf.nn.rnn_cell.LSTMCell(64, read_size+dec_size) # encoder Op
+lstm_dec = tf.nn.rnn_cell.LSTMCell(192, 10) # decoder Op
+
 
 def norm(tensor, reduction_indices = None, name = None):
     squared_tensor = tf.square(tensor)
@@ -141,21 +143,25 @@ def dense_to_one_hot(labels_dense, num_classes=10):
     return labels_one_hot
 
 
-
 outputs=[0] * glimpses
-h_dec_prev=tf.zeros((batch_size,dec_size))
-h_enc_prev=tf.zeros((batch_size,enc_size))
+h_dec_prev=tf.zeros((batch_size,192))
+h_enc_prev=tf.zeros((batch_size,192))
+h_enc_prev_loc=tf.zeros((batch_size,64))
 enc_state=lstm_enc.zero_state(batch_size, tf.float32)
+enc_state_loc=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
 
 loc_dist = tf.constant(0.0, shape=())
 for glimpse in range(glimpses):
-    r, chosen_locs=read(x,h_enc_prev)
+    r, chosen_locs=read(x,h_enc_prev_loc)
     loc_dist = loc_dist + (tf.reduce_mean(norm(chosen_locs - locations, reduction_indices = 1), 0))
     
     with tf.variable_scope("encoder", reuse=REUSE):
         h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev]), enc_state)
     
+    with tf.variable_scope("encoder_loc", reuse=REUSE):
+        h_enc_loc, enc_state_loc = lstm_enc_loc(tf.concat(1,[r,h_dec_prev]), enc_state_loc)
+
     with tf.variable_scope("z",reuse=REUSE):
         z=linear(h_enc,z_size)
 
@@ -166,6 +172,7 @@ for glimpse in range(glimpses):
         outputs[glimpse] = linear(h_dec, img_size)
     h_dec_prev=h_dec
     h_enc_prev = h_enc
+    h_enc_prev_loc = h_enc_loc
     REUSE=True
 
 with tf.variable_scope("hidden1",reuse=None):

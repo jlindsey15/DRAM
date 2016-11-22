@@ -64,7 +64,7 @@ for i in range(NUM_DISTORTIONS_DB):
     rand_digit = np.random.randint(num_digits)
     rand_x = np.random.randint(ORG_SHP[1]-dist_size[1])
     rand_y = np.random.randint(ORG_SHP[0]-dist_size[0])
-
+    
     digit = all_digits[rand_digit]
     distortion = digit[rand_y:rand_y + dist_size[0],
                        rand_x:rand_x + dist_size[1]]
@@ -75,20 +75,21 @@ for i in range(NUM_DISTORTIONS_DB):
 print "Created distortions"
 
 
-## BUILD MODEL ## 
+## BUILD MODEL ##
 
 REUSE=None
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
+reconstruct = tf.placeholder(tf.float32,shape=(batch_size,28*28))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
 
 def linear(x,output_dim):
     """
-    affine transformation Wx+b
-    assumes x.shape = (batch_size, num_features)
-    """
+        affine transformation Wx+b
+        assumes x.shape = (batch_size, num_features)
+        """
     w=tf.get_variable("w", [x.get_shape()[1], output_dim])
     b=tf.get_variable("b", [output_dim], initializer=tf.constant_initializer(0.0))
     return tf.matmul(x,w)+b
@@ -221,12 +222,12 @@ for glimpse in range(glimpses):
     
     with tf.variable_scope("z",reuse=REUSE):
         z=linear(h_enc,z_size)
-
+    
     with tf.variable_scope("decoder", reuse=REUSE):
         h_dec, dec_state = lstm_dec(z, dec_state)
-
+    
     with tf.variable_scope("write", reuse=REUSE):
-        outputs[glimpse] = linear(h_dec, img_size)
+        outputs[glimpse] = linear(h_dec, 28*28)
     h_dec_prev=h_dec
     REUSE=True
 
@@ -255,8 +256,8 @@ def evaluate():
     for i in xrange(batches_in_epoch):
         nextX, nextY = data.next_batch(batch_size)
         if translated:
-            nextX = convertTranslated(nextX)
-        feed_dict = {x: nextX, onehot_labels:nextY}
+            nextXTrans = convertTranslated(nextX)
+        feed_dict = {x: nextXTrans, reconstruct: nextX, onehot_labels:nextY}
         r = sess.run(reward, feed_dict=feed_dict)
         accuracy += r
     
@@ -268,7 +269,7 @@ def evaluate():
 
 x_recons=tf.nn.sigmoid(outputs[-1])
 
-reconstruction_loss=tf.reduce_sum(binary_crossentropy(x,x_recons),1)
+reconstruction_loss=tf.reduce_sum(binary_crossentropy(reconstruct,x_recons),1)
 reconstruction_loss=tf.reduce_mean(reconstruction_loss)
 
 
@@ -304,7 +305,7 @@ if str2bool(sys.argv[2]):
         varsToTrain.append(w)
         b = tf.get_variable("B")
         varsToTrain.append(b)
-            
+
 
 
 
@@ -375,8 +376,8 @@ else:
 
 
 if pretrain:
-
-
+    
+    
     if not os.path.exists("mnist"):
         os.makedirs("mnist")
     train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
@@ -384,27 +385,27 @@ if pretrain:
     fetches=[]
     fetches.extend([reconstruction_loss,train_op])
     reconstruction_lossses=[0]*pretrain_iters
-
-
-
+    
+    
+    
     sess=tf.InteractiveSession()
-
-
+    
+    
     tf.initialize_all_variables().run()
     if pretrain_restore:
         saver = tf.train.Saver(tf.all_variables())
         saver.restore(sess, load_file)
-
-
-
+    
+    
+    
     start_time = time.clock()
     extra_time = 0
     for i in range(pretrain_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            xtrain = convertTranslated(xtrain)
+            nextXTrans = convertTranslated(xtrain)
         
-        feed_dict={x:xtrain, onehot_labels:ytrain}
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches,feed_dict)
         reconstruction_lossses[i],_=results
         if i%100==0:
@@ -415,19 +416,19 @@ if pretrain:
                 print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
                 extra_time = extra_time + time.clock() - start_evaluate
                 print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
-    
+
 
 
 
 
     canvases=sess.run(outputs,feed_dict)
     canvases=np.array(canvases)
-
+    
     np.save(draw_file,[canvases,reconstruction_lossses])
     print("Outputs saved in file: %s" % draw_file)
-
-
-
+    
+    
+    
     print("FINISHED PRE-TRAINING")
 
 
@@ -438,14 +439,14 @@ if classify:
     tf.initialize_all_variables().run()
     if restore:
         saver.restore(sess, load_file)
-
-
+    
+    
     if start_non_restored_from_random:
         tf.initialize_variables(varsToTrain).run()
-
-
-
-
+    
+    
+    
+    
     if not os.path.exists("mnist"):
         os.makedirs("mnist")
     train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
@@ -455,12 +456,12 @@ if classify:
 
     start_time = time.clock()
     extra_time = 0
-
+    
     for i in range(train_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            xtrain = convertTranslated(xtrain)
-        feed_dict={x:xtrain, onehot_labels:ytrain}
+            nextXTrans = convertTranslated(xtrain)
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches2,feed_dict)
         reward_fetched,_=results
         if i%100==0:

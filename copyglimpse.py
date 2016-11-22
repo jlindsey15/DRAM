@@ -9,6 +9,7 @@ import os
 import random
 from scipy import misc
 import time
+import sys
 
 tf.flags.DEFINE_string("data_dir", "", "")
 tf.flags.DEFINE_boolean("write_attn",False, "enable attention for writer")
@@ -40,11 +41,10 @@ classify = True
 pretrain_restore = False
 restore = True
 rigid_pretrain = False
-log_filename = "translatedplain/second_test_gq_8000_log.csv"
-load_file = "translatedplain/drawmodel_2_8000.ckpt"
-save_file = "translatedplain/second_test_gq_8000_"
+log_filename = sys.argv[1]#"translatedplain/copyglimpse_cm_decayfast_from_scratch_80k_log.csv"
+load_file = sys.argv[2]#"translatedplain/classifymodel_from_scratch_80000.ckpt"
+save_file = "zzz"
 draw_file = "translatedplain/zzzdraw_data_5000.npy"
-read_hist = []
 params_hist = []
 
 ## BUILD MODEL ## 
@@ -53,14 +53,21 @@ DO_SHARE=None # workaround for variable_scope(reuse=True)
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
+locations = tf.placeholder(tf.float32, shape=(batch_size, 2))
+iteration = tf.placeholder(tf.float32, shape=())
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
 
+def norm(tensor, reduction_indices = None, name = None):
+    squared_tensor = tf.square(tensor)
+    euclidean_norm = tf.sqrt(tf.reduce_sum(squared_tensor, tf.cast(reduction_indices, tf.int32)))
+    return euclidean_norm
+
 def linear(x,output_dim):
     """
-    affine transformation Wx+b
-    assumes x.shape = (batch_size, num_features)
-    """
+        affine transformation Wx+b
+        assumes x.shape = (batch_size, num_features)
+        """
     w=tf.get_variable("w", [x.get_shape()[1], output_dim])
     b=tf.get_variable("b", [output_dim], initializer=tf.constant_initializer(0.0))
     return tf.matmul(x,w)+b
@@ -86,17 +93,17 @@ def filterbank(gx, gy, sigma2,delta, N):
 def attn_window(scope,h_dec,N):
     with tf.variable_scope(scope,reuse=DO_SHARE):
         params=linear(h_dec,5)
-        params_hist.append(params)
     gx_,gy_,log_sigma2,log_delta,log_gamma=tf.split(1,5,params)
     gx=(dims[0]+1)/2*(gx_+1)
     gy=(dims[1]+1)/2*(gy_+1)
     sigma2=tf.exp(log_sigma2)
+    chosen_locs = tf.concat(1, [gx, gy])
     delta=(max(dims[0],dims[1])-1)/(N-1)*tf.exp(log_delta) # batch x N
-    return filterbank(gx,gy,sigma2,delta,N)+(tf.exp(log_gamma),)
+    return filterbank(gx,gy,sigma2,delta,N)+(tf.exp(log_gamma), params, chosen_locs)
 
 
 def read(x,h_dec_prev):
-    Fx,Fy,gamma=attn_window("read",h_dec_prev,read_n)
+    Fx,Fy,gamma, params, chosen_locs=attn_window("read",h_dec_prev,read_n)
     def filter_img(img,Fx,Fy,gamma,N):
         Fxt=tf.transpose(Fx,perm=[0,2,1])
         img=tf.reshape(img,[-1,dims[1],dims[0]])
@@ -104,23 +111,23 @@ def read(x,h_dec_prev):
         glimpse=tf.reshape(glimpse,[-1,N*N])
         return glimpse*tf.reshape(gamma,[-1,1])
     x=filter_img(x,Fx,Fy,gamma,read_n) # batch x (read_n*read_n)
-    return tf.concat(1,[x]) # concat along feature axis
+    return tf.concat(1,[x]), params, chosen_locs # concat along feature axis
 
 
 
-## ENCODE ## 
+## ENCODE ##
 def encode(state,input):
     """
-    run LSTM
-    state = previous encoder state
-    input = cat(read,h_dec_prev)
-    returns: (output, new_state)
-    """
+        run LSTM
+        state = previous encoder state
+        input = cat(read,h_dec_prev)
+        returns: (output, new_state)
+        """
     with tf.variable_scope("encoder",reuse=DO_SHARE):
         return lstm_enc(input,state)
 
 
-## DECODER ## 
+## DECODER ##
 def decode(state,input):
     with tf.variable_scope("decoder",reuse=DO_SHARE):
         return lstm_dec(input, state)
@@ -132,6 +139,7 @@ def write(h_dec):
         return linear(h_dec,img_size)
 
 def convertTranslated(images):
+    locs = []
     newimages = []
     for k in xrange(batch_size):
         image = images[k, :]
@@ -141,7 +149,8 @@ def convertTranslated(images):
         image = np.lib.pad(image, ((randX, 72 - randX), (randY, 72 - randY)), 'constant', constant_values = (0))
         image = np.reshape(image, (100*100))
         newimages.append(image)
-    return newimages
+        locs.append([randY + 14, randX + 14])
+    return newimages, locs
 
 def dense_to_one_hot(labels_dense, num_classes=10):
     # copied from TensorFlow tutorial
@@ -152,7 +161,7 @@ def dense_to_one_hot(labels_dense, num_classes=10):
     return labels_one_hot
 
 
-## STATE VARIABLES ## 
+## STATE VARIABLES ##
 
 cs=[0]*T # sequence of canvases
 # initial states
@@ -161,22 +170,24 @@ enc_state=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
 
 
-## DRAW MODEL ## 
+## DRAW MODEL ##
 
 # construct the unrolled computational graph
+loc_dist = tf.constant(0.0, shape=())
 for t in range(T):
     c_prev = tf.zeros((batch_size,img_size)) if t==0 else cs[t-1]
     x_hat=x-tf.sigmoid(c_prev) # error image
-    r=read(x,h_dec_prev)
-    read_hist.append(r)
-
-
-
+    r, params, chosen_locs=read(x,h_dec_prev)
+    loc_dist = loc_dist + (tf.reduce_mean(norm(chosen_locs - locations, reduction_indices = 1), 0))
+    
+    params_hist.append(params)
+    
+    
     h_enc,enc_state=encode(enc_state,tf.concat(1,[r,h_dec_prev]))
     
     with tf.variable_scope("z",reuse=DO_SHARE):
         z=linear(h_enc,z_size)
-
+    
     h_dec,dec_state=decode(dec_state,z)
     cs[t]=write(h_dec) # store results
     h_dec_prev=h_dec
@@ -208,9 +219,9 @@ def evaluate():
     for i in xrange(batches_in_epoch):
         nextX, nextY = data.next_batch(batch_size)
         if translated:
-            nextX = convertTranslated(nextX)
-        feed_dict = {x: nextX, onehot_labels:nextY}
-        r = sess.run(reward_test, feed_dict=feed_dict)
+            nextX, locs = convertTranslated(nextX)
+            feed_dict = {x: nextX, onehot_labels:nextY, locations:locs, iteration:0}
+        r = sess.run(g_reward, feed_dict=feed_dict)
         accuracy += r
     
     accuracy /= batches_in_epoch
@@ -232,39 +243,8 @@ predcost = -predquality
 ##################
 
 
-optimizer=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
-grads=optimizer.compute_gradients(reconstruction_loss)
-for i,(g,v) in enumerate(grads):
-    if g is not None:
-        grads[i]=(tf.clip_by_norm(g,5),v) # clip gradients
-train_op=optimizer.apply_gradients(grads)
 
-varsToTrain = []
-with tf.variable_scope("hidden1",reuse=True):
-    w = tf.get_variable("w")
-    varsToTrain.append(w)
-    b = tf.get_variable("b")
-    varsToTrain.append(b)
-with tf.variable_scope("hidden2",reuse=True):
-    w = tf.get_variable("w")
-    varsToTrain.append(w)
-    b = tf.get_variable("b")
-    varsToTrain.append(b)
 
-optimizer2=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
-grads2a=optimizer2.compute_gradients(predcost, var_list = varsToTrain)
-grads2b=optimizer2.compute_gradients(predcost)
-
-for i,(g,v) in enumerate(grads2a):
-    if g is not None:
-        grads2a[i]=(tf.clip_by_norm(g,5),v) # clip gradients
-for i,(g,v) in enumerate(grads2b):
-    if g is not None:
-        grads2b[i]=(tf.clip_by_norm(g,5),v) # clip gradients
-if rigid_pretrain:
-    train_op2=optimizer2.apply_gradients(grads2a)
-else:
-    train_op2=optimizer2.apply_gradients(grads2b)
 
 
 
@@ -277,46 +257,110 @@ if restore:
     saver.restore(load_sess, load_file)
 
 
-
-lstm_test = tf.nn.rnn_cell.LSTMCell(256, 512)
-test_state=lstm_dec.zero_state(batch_size, tf.float32)
-
-
-SHARE = None
-
-for t in range(T):
-
-    no_grad_r = tf.stop_gradient(read_hist[t])
-    no_grad_look_params = tf.stop_gradient(params_hist[t])
-    with tf.variable_scope("loc", reuse=SHARE):
-        look_hidden=tf.tanh(linear(no_grad_look_params, 256))
-    with tf.variable_scope("process_read", reuse=SHARE):
-        read_hidden=tf.tanh(linear(no_grad_r, 256))
-    with tf.variable_scope("lstm_test", reuse=SHARE):
-        lstm_out, test_state = lstm_test(tf.concat(1, [read_hidden, look_hidden]), test_state)
-    SHARE = True
-
-
-
-with tf.variable_scope("test_hidden1",reuse=None):
-    hidden_test = tf.nn.relu(linear(lstm_out, 256))
-with tf.variable_scope("test_hidden2",reuse=None):
-    classification_test = tf.nn.softmax(linear(hidden_test, 10))
-predquality_test = tf.log(classification_test + 1e-5) * onehot_labels
-predquality_test = tf.reduce_mean(predquality_test, 0)
-correct_test = tf.arg_max(onehot_labels, 1)
-prediction_test = tf.arg_max(classification_test, 1)
-R_test = tf.cast(tf.equal(correct_test, prediction_test), tf.float32)
-reward_test = tf.reduce_mean(R_test)
-predcost_test = -predquality_test
-
-optimizer_test=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
-grads_test=optimizer.compute_gradients(predcost_test)
-for i,(g,v) in enumerate(grads_test):
+optimizer=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
+grads=optimizer.compute_gradients(reconstruction_loss)
+for i,(g,v) in enumerate(grads):
     if g is not None:
-        grads_test[i]=(tf.clip_by_norm(g,5),v) # clip gradients
-train_op_test=optimizer_test.apply_gradients(grads_test)
+        grads[i]=(tf.clip_by_norm(g,5),v) # clip gradients
+train_op=optimizer.apply_gradients(grads)
 
+
+optimizer2=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
+grads2=optimizer2.compute_gradients(predcost)
+for i,(g,v) in enumerate(grads2):
+    if g is not None:
+        grads2[i]=(tf.clip_by_norm(g,5),v) # clip gradients
+train_op2=optimizer2.apply_gradients(grads2)
+
+##### **************
+
+DO_SHARE = None
+
+with tf.variable_scope("gX", reuse=None):
+
+    g_lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
+    g_lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
+
+
+
+    ## STATE VARIABLES ##
+
+    g_cs=[0]*T # sequence of canvases
+    # initial states
+    g_h_dec_prev=tf.zeros((batch_size,dec_size))
+    g_enc_state=lstm_enc.zero_state(batch_size, tf.float32)
+    g_dec_state=lstm_dec.zero_state(batch_size, tf.float32)
+
+
+    ## DRAW MODEL ##
+
+    # construct the unrolled computational graph
+    param_diff = tf.zeros([1])
+    g_loc_dist = tf.constant(0.0, shape=())
+    for t in range(T):
+        g_c_prev = tf.zeros((batch_size,img_size)) if t==0 else cs[t-1]
+        g_r, g_params, g_chosen_locs=read(x,g_h_dec_prev)
+        historical_params = tf.stop_gradient(params_hist[t])
+        param_diff = param_diff + tf.reduce_mean(tf.square(g_params - historical_params))
+        g_loc_dist = g_loc_dist + (tf.reduce_mean(norm(g_chosen_locs - locations, reduction_indices = 1), 0))
+
+
+        
+        g_h_enc,g_enc_state=encode(g_enc_state,tf.concat(1,[g_r,g_h_dec_prev]))
+        
+        with tf.variable_scope("z",reuse=DO_SHARE):
+            g_z=linear(g_h_enc,z_size)
+        
+        g_h_dec, g_dec_state=decode(g_dec_state,g_z)
+        g_cs[t]=write(h_dec) # store results
+        g_h_dec_prev=g_h_dec
+        DO_SHARE=True # from now on, share variables
+
+    with tf.variable_scope("hidden1",reuse=None):
+        g_hidden = tf.nn.relu(linear(g_h_dec_prev, 256))
+    with tf.variable_scope("hidden2",reuse=None):
+        g_classification = tf.nn.softmax(linear(g_hidden, 10))
+    g_predquality = tf.log(g_classification + 1e-5) * onehot_labels
+    g_predquality = tf.reduce_mean(g_predquality, 0)
+    g_correct = tf.arg_max(onehot_labels, 1)
+    g_prediction = tf.arg_max(g_classification, 1)
+    g_R = tf.cast(tf.equal(g_correct, g_prediction), tf.float32)
+    g_reward = tf.reduce_mean(g_R)
+
+    g_x_recons=tf.nn.sigmoid(g_cs[-1])
+
+
+    g_reconstruction_loss=tf.reduce_sum(binary_crossentropy(x,g_x_recons),1)
+    g_reconstruction_loss=tf.reduce_mean(g_reconstruction_loss)
+
+    g_predcost = -g_predquality
+##### **************
+
+g_optimizer=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
+g_grads=optimizer.compute_gradients(g_reconstruction_loss)
+for i,(g,v) in enumerate(g_grads):
+    if g is not None:
+        g_grads[i]=(tf.clip_by_norm(g,5),v) # clip gradients
+g_train_op=optimizer.apply_gradients(g_grads)
+
+
+g_optimizer2=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
+g_grads2=optimizer2.compute_gradients(g_predcost)
+for i,(g,v) in enumerate(g_grads2):
+    if g is not None:
+        g_grads2[i]=(tf.clip_by_norm(g,5),v) # clip gradients
+g_train_op2=optimizer2.apply_gradients(g_grads2)
+
+
+g_cost = tf.pow(0.95, iteration) * param_diff + g_predcost
+
+
+optimizer3=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
+g_grads3=optimizer3.compute_gradients(g_cost)
+for i,(g,v) in enumerate(g_grads3):
+    if g is not None:
+        g_grads3[i]=(tf.clip_by_norm(g,5),v) # clip gradients
+g_train_op3=optimizer3.apply_gradients(g_grads3)
 
 sess=tf.InteractiveSession()
 with sess.as_default():
@@ -329,6 +373,18 @@ with tf.variable_scope("read",reuse=True):
     sess.run(assign_op)
 
 with tf.variable_scope("z",reuse=True):
+    assign_op = tf.get_variable("w").assign(load_sess.run(tf.get_variable("w")))
+    sess.run(assign_op)
+    assign_op = tf.get_variable("b").assign(load_sess.run(tf.get_variable("b")))
+    sess.run(assign_op)
+
+with tf.variable_scope("hidden1",reuse=True):
+    assign_op = tf.get_variable("w").assign(load_sess.run(tf.get_variable("w")))
+    sess.run(assign_op)
+    assign_op = tf.get_variable("b").assign(load_sess.run(tf.get_variable("b")))
+    sess.run(assign_op)
+
+with tf.variable_scope("hidden2",reuse=True):
     assign_op = tf.get_variable("w").assign(load_sess.run(tf.get_variable("w")))
     sess.run(assign_op)
     assign_op = tf.get_variable("b").assign(load_sess.run(tf.get_variable("b")))
@@ -359,29 +415,31 @@ if not os.path.exists(data_directory):
 train_data = mnist.input_data.read_data_sets(data_directory, one_hot=True).train # binarized (0-1) mnist data
 
 fetches2=[]
-fetches2.extend([reward_test,train_op_test])
+fetches2.extend([g_reward, param_diff, loc_dist, g_loc_dist, g_train_op3])
 
 
 start_time = time.clock()
 extra_time = 0
 
 for i in range(train_iters):
-    read_hist = []
     params_hist = []
     xtrain, ytrain =train_data.next_batch(batch_size) # xtrain is (batch_size x img_size)
     if translated:
-        xtrain = convertTranslated(xtrain)
-    feed_dict={x:xtrain, onehot_labels:ytrain}
+        xtrain, locs = convertTranslated(xtrain)
+    feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs, iteration:(i/100)}
     results=sess.run(fetches2,feed_dict)
-    reward_fetched,_=results
+    reward_fetched, param_diff_fetched, chosen_locs_fetched, g_chosen_locs_fetched, _=results
     if i%100==0:
         print("iter=%d : Reward: %f" % (i, reward_fetched))
+        print(chosen_locs_fetched)
+        print(g_chosen_locs_fetched)
+        print(param_diff_fetched)
         if i %1000==0:
             start_evaluate = time.clock()
             test_accuracy = evaluate()
-            saver = tf.train.Saver(tf.all_variables()) # saves variables learned during training
-            ckpt_file=os.path.join(FLAGS.data_dir, save_file + str(i) + ".ckpt")
-            print("Model saved in file: %s" % saver.save(sess,ckpt_file))
+            saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.VARIABLES, scope='gX')) # saves variables learned during training
+            #ckpt_file=os.path.join(FLAGS.data_dir, save_file + str(i) + ".ckpt")
+            #print("Model saved in file: %s" % saver.save(sess,ckpt_file))
             extra_time = extra_time + time.clock() - start_evaluate
             print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
             if i == 0:

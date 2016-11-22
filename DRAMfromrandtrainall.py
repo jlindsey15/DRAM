@@ -283,7 +283,7 @@ if str2bool(sys.argv[6]):
 optimizer2=tf.train.AdamOptimizer(learning_rate, beta1=0.5)
 for v in varsToTrain:
     print(v.name)
-grads2a=optimizer2.compute_gradients(predcost, var_list = varsToTrain)
+grads2a=optimizer2.compute_gradients(predcost)
 grads2b=optimizer2.compute_gradients(predcost)
 
 for i,(g,v) in enumerate(grads2a):

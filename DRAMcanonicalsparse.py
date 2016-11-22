@@ -53,8 +53,15 @@ REUSE=None
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
 reconstruct = tf.placeholder(tf.float32,shape=(batch_size,28*28))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
+locations = tf.placeholder(tf.float32, shape=(batch_size, 2))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
+
+
+def norm(tensor, reduction_indices = None, name = None):
+    squared_tensor = tf.square(tensor)
+    euclidean_norm = tf.sqrt(tf.reduce_sum(squared_tensor, tf.cast(reduction_indices, tf.int32)))
+    return euclidean_norm
 
 def linear(x,output_dim):
     """
@@ -85,17 +92,19 @@ def filterbank(gx, gy, sigma2,delta, N):
 
 def attn_window(scope,h_dec,N):
     with tf.variable_scope(scope,reuse=REUSE):
-        params=linear(h_dec,5)
+        params= linear(h_dec,5)
     gx_,gy_,log_sigma2,log_delta,log_gamma=tf.split(1,5,params)
     gx=(dims[0]+1)/2*(gx_+1)
     gy=(dims[1]+1)/2*(gy_+1)
+    chosen_locs = tf.concat(1, [gx, gy])
+    #chosen_locs = 50 * tf.ones(chosen_locs.get_shape())
     sigma2=tf.exp(log_sigma2)
     delta=(max(dims[0],dims[1])-1)/(N-1)*tf.exp(log_delta) # batch x N
-    return filterbank(gx,gy,sigma2,delta,N)+(tf.exp(log_gamma),)
+    return filterbank(gx,gy,sigma2,delta,N)+(tf.exp(log_gamma), chosen_locs)
 
 
 def read(x,h_dec_prev):
-    Fx,Fy,gamma=attn_window("read",h_dec_prev,read_n)
+    Fx,Fy,gamma, chosen_locs=attn_window("read",h_dec_prev,read_n)
     def filter_img(img,Fx,Fy,gamma,N):
         Fxt=tf.transpose(Fx,perm=[0,2,1])
         img=tf.reshape(img,[-1,dims[1],dims[0]])
@@ -103,7 +112,7 @@ def read(x,h_dec_prev):
         glimpse=tf.reshape(glimpse,[-1,N*N])
         return glimpse*tf.reshape(gamma,[-1,1])
     x=filter_img(x,Fx,Fy,gamma,read_n) # batch x (read_n*read_n)
-    return tf.concat(1,[x]) # concat along feature axis
+    return tf.concat(1,[x]), chosen_locs # concat along feature axis
 
 
 
@@ -112,6 +121,7 @@ def write(h_dec):
         return linear(h_dec,img_size)
 
 def convertTranslated(images):
+    locs = []
     newimages = []
     for k in xrange(batch_size):
         image = images[k, :]
@@ -121,7 +131,8 @@ def convertTranslated(images):
         image = np.lib.pad(image, ((randX, 72 - randX), (randY, 72 - randY)), 'constant', constant_values = (0))
         image = np.reshape(image, (100*100))
         newimages.append(image)
-    return newimages
+        locs.append([randY + 14, randX + 14])
+    return newimages, locs
 
 def dense_to_one_hot(labels_dense, num_classes=10):
     # copied from TensorFlow tutorial
@@ -138,9 +149,12 @@ h_dec_prev=tf.zeros((batch_size,dec_size))
 enc_state=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
 
+loc_dist = tf.constant(0.0, shape=())
 
 for glimpse in range(glimpses):
-    r=read(x,h_dec_prev)
+    r, chosen_locs=read(x,h_dec_prev)
+    loc_dist = loc_dist + (tf.reduce_mean(norm(chosen_locs - locations, reduction_indices = 1), 0))
+
     with tf.variable_scope("encoder", reuse=REUSE):
         h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev]), enc_state)
     
@@ -154,6 +168,8 @@ for glimpse in range(glimpses):
         outputs[glimpse] = linear(h_dec, 28*28)
     h_dec_prev=h_dec
     REUSE=True
+
+l1_cost = 10 * tf.reduce_sum(tf.abs(h_dec))
 
 with tf.variable_scope("hidden1",reuse=None):
     hidden = tf.nn.relu(linear(h_dec_prev, 256))
@@ -180,8 +196,8 @@ def evaluate():
     for i in xrange(batches_in_epoch):
         nextX, nextY = data.next_batch(batch_size)
         if translated:
-            nextXTrans = convertTranslated(nextX)
-        feed_dict = {x: nextXTrans, reconstruct: nextX, onehot_labels:nextY}
+            nextXTrans, locs = convertTranslated(nextX)
+        feed_dict = {x: nextXTrans, reconstruct: nextX, onehot_labels:nextY, locations:locs}
         r = sess.run(reward, feed_dict=feed_dict)
         accuracy += r
     
@@ -194,7 +210,8 @@ def evaluate():
 x_recons=tf.nn.sigmoid(outputs[-1])
 
 reconstruction_loss=tf.reduce_sum(binary_crossentropy(reconstruct,x_recons),1)
-reconstruction_loss=tf.reduce_mean(reconstruction_loss)
+rl = tf.reduce_mean(reconstruction_loss)
+reconstruction_loss=tf.reduce_mean(reconstruction_loss) + l1_cost
 
 
 predcost = -predquality
@@ -307,7 +324,7 @@ if pretrain:
     train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
 
     fetches=[]
-    fetches.extend([reconstruction_loss,train_op])
+    fetches.extend([rl, loc_dist, train_op])
     reconstruction_lossses=[0]*pretrain_iters
 
 
@@ -327,13 +344,14 @@ if pretrain:
     for i in range(pretrain_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            nextXTrans = convertTranslated(xtrain)
+            nextXTrans, locs = convertTranslated(xtrain)
         
-        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain}
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain, locations:locs}
         results=sess.run(fetches,feed_dict)
-        reconstruction_lossses[i],_=results
+        reconstruction_lossses[i], loc_dist_fetched, _=results
         if i%100==0:
             print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
+            print(loc_dist_fetched)
             if i %1000==0:
                 start_evaluate = time.clock()
                 evaluate()
@@ -376,7 +394,7 @@ if classify:
         os.makedirs("mnist")
     train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
     fetches2=[]
-    fetches2.extend([reward,train_op2])
+    fetches2.extend([reward, loc_dist, train_op2])
 
 
     start_time = time.clock()
@@ -385,12 +403,13 @@ if classify:
     for i in range(train_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            nextXTrans = convertTranslated(xtrain)
-        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain}
+            nextXTrans, locs = convertTranslated(xtrain)
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain, locations:locs}
         results=sess.run(fetches2,feed_dict)
-        reward_fetched,_=results
+        reward_fetched, loc_dist_fetched, _=results
         if i%100==0:
             print("iter=%d : Reward: %f" % (i, reward_fetched))
+            print(loc_dist_fetched)
             if i %1000==0:
                 start_evaluate = time.clock()
                 test_accuracy = evaluate()

@@ -25,7 +25,7 @@ if translated:
 else:
     dims = [28, 28]
 img_size = dims[1]*dims[0]
-read_n = 5
+read_n = 12
 read_size = read_n*read_n
 z_size=10
 glimpses=10
@@ -239,6 +239,9 @@ for glimpse in range(glimpses):
     h_dec_prev=h_dec
     REUSE=True
 
+l1_cost = 0.001 * tf.reduce_sum(tf.abs(h_dec))
+
+
 with tf.variable_scope("hidden1",reuse=None):
     hidden = tf.nn.relu(linear(h_dec_prev, 256))
 with tf.variable_scope("hidden2",reuse=None):
@@ -276,7 +279,7 @@ def evaluate():
 
 x_recons=tf.nn.sigmoid(outputs[-1])
 
-reconstruction_loss= loc_dist
+reconstruction_loss= loc_dist + l1_cost
 
 
 predcost = -predquality

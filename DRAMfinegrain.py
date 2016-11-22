@@ -17,7 +17,7 @@ def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
 
-translated = str2bool(sys.argv[13]) #True
+translated = True #True
 if translated:
     dims = [100, 100]
 else:
@@ -34,16 +34,16 @@ pretrain_iters=10000000
 train_iters=10000000
 learning_rate=1e-3
 eps=1e-8
-pretrain = str2bool(sys.argv[11]) #False
-classify = str2bool(sys.argv[12]) #True
-pretrain_restore = False
-restore = str2bool(sys.argv[14]) #True
-rigid_pretrain = True
-log_filename = sys.argv[7] #"translatedplain/classify_weird_from_20000_log.csv"
-load_file = sys.argv[8] #"translatedplain/drawmodel20000.ckpt"
-save_file = sys.argv[9] #"translatedplain/classifymodel_weird_from_20000_"
-draw_file = sys.argv[10] #"translatedplain/zzzdraw_data_5000.npy"
-start_non_restored_from_random = str2bool(sys.argv[15])
+pretrain = True #False
+classify = False #True
+pretrain_restore = True
+restore = False #True
+rigid_pretrain = False
+log_filename = "fg/draw_fg_from_10000_log.csv"
+load_file =  "drawmodels/drawmodel10000.ckpt"
+save_file = "fg/drawmodel_fg_from_10000_"
+draw_file = "fg/fgdraw_data_10000.npy"
+start_non_restored_from_random = False
 
 
 ## BUILD MODEL ## 
@@ -211,7 +211,7 @@ train_op=optimizer.apply_gradients(grads)
 
 varsToTrain = []
 
-if str2bool(sys.argv[1]):
+if True:#str2bool(sys.argv[1]):
     
     with tf.variable_scope("read",reuse=True):
         w = tf.get_variable("w")
@@ -221,7 +221,7 @@ if str2bool(sys.argv[1]):
 
 
 
-if str2bool(sys.argv[2]):
+if True:#str2bool(sys.argv[2]):
     
     with tf.variable_scope("encoder/LSTMCell",reuse=True):
         w = tf.get_variable("W_0")
@@ -232,7 +232,7 @@ if str2bool(sys.argv[2]):
 
 
 
-if str2bool(sys.argv[3]):
+if True:#str2bool(sys.argv[3]):
     
     with tf.variable_scope("z",reuse=True):
         w = tf.get_variable("w")
@@ -242,7 +242,7 @@ if str2bool(sys.argv[3]):
 
 
 
-if str2bool(sys.argv[4]):
+if True:#str2bool(sys.argv[4]):
     
     with tf.variable_scope("decoder/LSTMCell",reuse=True):
         w = tf.get_variable("W_0")
@@ -252,7 +252,7 @@ if str2bool(sys.argv[4]):
 
 
 
-if str2bool(sys.argv[5]):
+if True:#str2bool(sys.argv[5]):
     
     with tf.variable_scope("hidden1",reuse=True):
         w = tf.get_variable("w")
@@ -261,7 +261,7 @@ if str2bool(sys.argv[5]):
         varsToTrain.append(b)
 
 
-if str2bool(sys.argv[6]):
+if True:#str2bool(sys.argv[6]):
     
     with tf.variable_scope("hidden2",reuse=True):
         w = tf.get_variable("w")
@@ -331,15 +331,11 @@ if pretrain:
         feed_dict={x:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches,feed_dict)
         reconstruction_lossses[i],_=results
+        saver = tf.train.Saver(tf.all_variables())
+        print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
         if i%100==0:
             print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
-            if i %1000==0:
-                start_evaluate = time.clock()
-                evaluate()
-                saver = tf.train.Saver(tf.all_variables())
-                print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
-                extra_time = extra_time + time.clock() - start_evaluate
-                print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
+
     
 
 
@@ -388,21 +384,12 @@ if classify:
         feed_dict={x:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches2,feed_dict)
         reward_fetched,_=results
+        saver = tf.train.Saver(tf.all_variables())
+        print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
         if i%100==0:
             print("iter=%d : Reward: %f" % (i, reward_fetched))
-            if i %1000==0:
-                start_evaluate = time.clock()
-                test_accuracy = evaluate()
-                #saver = tf.train.Saver(tf.all_variables())
-                #print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
-                extra_time = extra_time + time.clock() - start_evaluate
-                print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
-                if i == 0:
-                    log_file = open(log_filename, 'w')
-                else:
-                    log_file = open(log_filename, 'a')
-                log_file.write(str(time.clock() - start_time - extra_time) + "," + str(test_accuracy) + "\n")
-                log_file.close()
+
+
 
 
 

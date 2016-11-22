@@ -155,7 +155,7 @@ for glimpse in range(glimpses):
     h_dec_prev=h_dec
     REUSE=True
 
-l1_cost = 0.001 * tf.reduce_sum(tf.abs(h_dec))
+l1_cost = 10 * tf.reduce_sum(tf.abs(h_dec)) + tf.reduce_sum(tf.abs(z)) + tf.reduce_sum(tf.abs(h_enc))
 
 with tf.variable_scope("hidden1",reuse=None):
     hidden = tf.nn.relu(linear(h_dec_prev, 256))

@@ -32,7 +32,7 @@ enc_size = 256
 dec_size = 256
 pretrain_iters=10000000
 train_iters=10000000
-learning_rate=1e-4
+learning_rate=1e-3
 eps=1e-8
 pretrain = str2bool(sys.argv[11]) #False
 classify = str2bool(sys.argv[12]) #True
@@ -52,9 +52,9 @@ REUSE=None
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
-lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
-lstm_dec = tf.nn.rnn_cell.LSTMCell(192, z_size + 64) # decoder Op
-lstm_dec_loc = tf.nn.rnn_cell.LSTMCell(64, z_size + 192) # decoder Op
+lstm_enc = tf.nn.rnn_cell.LSTMCell(192, read_size+dec_size) # encoder Op
+lstm_enc_loc = tf.nn.rnn_cell.LSTMCell(64, read_size+dec_size) # encoder Op
+lstm_dec = tf.nn.rnn_cell.LSTMCell(192, 10) # decoder Op
 
 def linear(x,output_dim):
     """
@@ -135,30 +135,34 @@ def dense_to_one_hot(labels_dense, num_classes=10):
 
 outputs=[0] * glimpses
 h_dec_prev=tf.zeros((batch_size,192))
-h_dec_prev_loc =tf.zeros((batch_size,64))
+h_enc_prev =tf.zeros((batch_size,192))
+h_enc_prev_loc =tf.zeros((batch_size,64))
 enc_state=lstm_enc.zero_state(batch_size, tf.float32)
+enc_state_loc=lstm_enc_loc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
-dec_state_loc=lstm_dec_loc.zero_state(batch_size, tf.float32)
 
 
 
 for glimpse in range(glimpses):
-    r=read(x,h_dec_prev_loc)
+    r=read(x, h_enc_prev_loc)
     with tf.variable_scope("encoder", reuse=REUSE):
-        h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev, h_dec_prev_loc]), enc_state)
+        h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev]), enc_state)
+    
+    with tf.variable_scope("encoder_loc", reuse=REUSE):
+        h_enc_loc, enc_state_loc = lstm_enc_loc(tf.concat(1,[r,h_dec_prev]), enc_state_loc)
     
     with tf.variable_scope("z",reuse=REUSE):
-        z=linear(h_enc,z_size)
+        z=linear(h_enc,10)
+
 
     with tf.variable_scope("decoder", reuse=REUSE):
-        h_dec, dec_state = lstm_dec(tf.concat(1, [z, dec_state_loc]), dec_state)
-    with tf.variable_scope("decoder_loc", reuse=REUSE):
-        h_dec_loc, dec_state_loc = lstm_dec_loc(tf.concat(1, [z, dec_state]), dec_state_loc)
+        h_dec, dec_state = lstm_dec(tf.concat(1, [z]), dec_state)
 
     with tf.variable_scope("write", reuse=REUSE):
         outputs[glimpse] = linear(h_dec, img_size)
     h_dec_prev=h_dec
-    h_dec_prev_loc=h_dec_loc
+    h_enc_prev = h_enc
+    h_enc_prev_loc = h_enc_loc
     REUSE=True
 
 with tf.variable_scope("hidden1",reuse=None):

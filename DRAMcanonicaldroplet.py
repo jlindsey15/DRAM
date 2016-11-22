@@ -143,6 +143,8 @@ for glimpse in range(glimpses):
     r=read(x,h_dec_prev)
     with tf.variable_scope("encoder", reuse=REUSE):
         h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev]), enc_state)
+    with tf.variable_scope("encoder2", reuse=REUSE):
+        h_enc2, enc_state2 = lstm_enc(tf.concat(1,[r,h_dec_prev2]), enc_state)
     
     with tf.variable_scope("z",reuse=REUSE):
         z=linear(h_enc,z_size)

@@ -10,6 +10,8 @@ import random
 from scipy import misc
 import time
 import sys
+from load_mnist import load_data
+
 
 FLAGS = tf.flags.FLAGS
 
@@ -23,7 +25,7 @@ if translated:
 else:
     dims = [28, 28]
 img_size = dims[1]*dims[0]
-read_n = 5
+read_n = 12
 read_size = read_n*read_n
 z_size=10
 glimpses=10
@@ -44,7 +46,34 @@ load_file = sys.argv[8] #"translatedplain/drawmodel20000.ckpt"
 save_file = sys.argv[9] #"translatedplain/classifymodel_weird_from_20000_"
 draw_file = sys.argv[10] #"translatedplain/zzzdraw_data_5000.npy"
 start_non_restored_from_random = str2bool(sys.argv[15])
+dist_size = (9, 9)
+ORG_SHP = [28, 28]
+OUT_SHP = [100, 100]
+NUM_DISTORTIONS_DB = 100000
+mnist_data = load_data('mnist.pkl.gz')
 
+
+
+### create list with distortions
+all_digits = np.concatenate([mnist_data['X_train'],
+                             mnist_data['X_valid']], axis=0)
+all_digits = all_digits.reshape([-1] + ORG_SHP)
+num_digits = all_digits.shape[0]
+
+distortions = []
+for i in range(NUM_DISTORTIONS_DB):
+    rand_digit = np.random.randint(num_digits)
+    rand_x = np.random.randint(ORG_SHP[1]-dist_size[1])
+    rand_y = np.random.randint(ORG_SHP[0]-dist_size[0])
+    
+    digit = all_digits[rand_digit]
+    distortion = digit[rand_y:rand_y + dist_size[0],
+                       rand_x:rand_x + dist_size[1]]
+    assert distortion.shape == dist_size
+                       #plt.imshow(distortion, cmap='gray')
+                       #plt.show()
+    distortions += [distortion]
+print "Created distortions"
 
 ## BUILD MODEL ## 
 
@@ -53,6 +82,7 @@ REUSE=None
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 locations = tf.placeholder(tf.float32, shape=(batch_size, 2))
+iteration = tf.placeholder(tf.float32, shape=())
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
 
@@ -118,18 +148,62 @@ def write(h_dec):
     with tf.variable_scope("write",reuse=REUSE):
         return linear(h_dec,img_size)
 
+def add_distortions(digits, num_distortions):
+    canvas = np.zeros_like(digits)
+    for i in range(num_distortions):
+        rand_distortion = distortions[np.random.randint(NUM_DISTORTIONS_DB)]
+        rand_x = np.random.randint(OUT_SHP[1]-dist_size[1])
+        rand_y = np.random.randint(OUT_SHP[0]-dist_size[0])
+        canvas[rand_y:rand_y+dist_size[0],
+               rand_x:rand_x+dist_size[1]] = rand_distortion
+    canvas += digits
+    return np.clip(canvas, 0, 1)
+
+
+
+def create_sample(x, output_shp, num_distortions):
+    a, b = x.shape
+    
+    x_offset = np.random.choice(range(output_shp[1] - a))
+    y_offset = np.random.choice(range(output_shp[1] - b))
+    
+    angle = np.random.choice(range(int(-b*0.5), int(b*0.5)))
+    
+    output = np.zeros(output_shp)
+    x_start = x_offset
+    
+    x_end = x_start + b
+    y_start = y_offset
+    y_end = y_start + a
+    if y_end > (output_shp[1]-1):
+        m = output_shp[1] - y_end
+        y_end += m
+        y_start += m
+    if y_start < 0:
+        m = y_start
+        y_end -= m
+        y_start -= m
+    output[y_start:y_end, x_start:x_end] = x
+    if num_distortions > 0:
+        output = add_distortions(output, num_distortions)
+    output = np.reshape(output, [10000])
+    return output, x_start, y_start
+
+
+
+
+
+
+
 def convertTranslated(images):
-    locs = []
     newimages = []
+    locs = []
     for k in xrange(batch_size):
         image = images[k, :]
-        image = np.reshape(image, (28, 28))
-        randX = random.randint(0, 72)
-        randY = random.randint(0, 72)
-        image = np.lib.pad(image, ((randX, 72 - randX), (randY, 72 - randY)), 'constant', constant_values = (0))
-        image = np.reshape(image, (100*100))
-        newimages.append(image)
-        locs.append([randY + 14, randX + 14])
+        image = np.reshape(image, [28, 28])
+        temp, x_start, y_start = create_sample(image, [100, 100], num_distortions = 8)
+        newimages.append(temp)
+        locs.append([y_start + 14, x_start + 14])
     return newimages, locs
 
 def dense_to_one_hot(labels_dense, num_classes=10):
@@ -191,7 +265,7 @@ def evaluate():
         nextX, nextY = data.next_batch(batch_size)
         if translated:
             nextX, locs = convertTranslated(nextX)
-        feed_dict = {x: nextX, onehot_labels:nextY, locations:locs}
+            feed_dict = {x: nextX, onehot_labels:nextY, locations:locs, iteration:0.0}
         r = sess.run(reward, feed_dict=feed_dict)
         accuracy += r
     
@@ -206,7 +280,7 @@ x_recons=tf.nn.sigmoid(outputs[-1])
 reconstruction_loss= loc_dist
 
 
-predcost = -predquality
+predcost = -predquality + 0.001 * tf.pow(0.9, iteration) * loc_dist
 
 
 ##################
@@ -338,7 +412,7 @@ if pretrain:
         if translated:
             xtrain, locs = convertTranslated(xtrain)
         
-        feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs}
+        feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs, iteration:(i/100.0)}
         results=sess.run(fetches,feed_dict)
         reconstruction_lossses[i],_=results
         if i%100==0:
@@ -395,7 +469,7 @@ if classify:
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
             xtrain, locs = convertTranslated(xtrain)
-        feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs}
+        feed_dict={x:xtrain, onehot_labels:ytrain, locations:locs, iteration:(i/100)}
         results=sess.run(fetches2,feed_dict)
         reward_fetched,loc_dist_fetched, chosen_locs_fetched, _=results
         if i%100==0:

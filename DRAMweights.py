@@ -17,7 +17,7 @@ def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
 
-translated = str2bool(sys.argv[13]) #True
+translated = True
 if translated:
     dims = [100, 100]
 else:
@@ -27,23 +27,23 @@ read_n = 5
 read_size = read_n*read_n
 z_size=10
 glimpses=10
-batch_size=100
+batch_size=1
 enc_size = 256
 dec_size = 256
 pretrain_iters=10000000
 train_iters=10000000
 learning_rate=1e-3
 eps=1e-8
-pretrain = str2bool(sys.argv[11]) #False
-classify = str2bool(sys.argv[12]) #True
+pretrain = False #False
+classify = True #True
 pretrain_restore = False
-restore = str2bool(sys.argv[14]) #True
+restore = True #True
 rigid_pretrain = True
-log_filename = sys.argv[7] #"translatedplain/classify_weird_from_20000_log.csv"
-load_file = sys.argv[8] #"translatedplain/drawmodel20000.ckpt"
-save_file = sys.argv[9] #"translatedplain/classifymodel_weird_from_20000_"
-draw_file = sys.argv[10] #"translatedplain/zzzdraw_data_5000.npy"
-start_non_restored_from_random = str2bool(sys.argv[15])
+log_filename = "translatedplain/classify_weird_from_20000_log.csv"
+load_file = "translatedplain/drawmodel20000.ckpt"
+save_file = "translatedplain/classifymodel_weird_from_20000_"
+draw_file = "translatedplain/zzzdraw_data_5000.npy"
+start_non_restored_from_random = False
 
 
 ## BUILD MODEL ## 
@@ -54,6 +54,11 @@ x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
+
+def normSquared(tensor, reduction_indices = None, name = None):
+    squared_tensor = tf.square(tensor)
+    euclidean_norm = (tf.reduce_sum(squared_tensor, tf.cast(reduction_indices, tf.int32)))
+    return euclidean_norm_squared
 
 def linear(x,output_dim):
     """
@@ -90,11 +95,11 @@ def attn_window(scope,h_dec,N):
     gy=(dims[1]+1)/2*(gy_+1)
     sigma2=tf.exp(log_sigma2)
     delta=(max(dims[0],dims[1])-1)/(N-1)*tf.exp(log_delta) # batch x N
-    return filterbank(gx,gy,sigma2,delta,N)+(tf.exp(log_gamma),)
+    return filterbank(gx,gy,sigma2,delta,N)+(tf.exp(log_gamma), params)
 
 
 def read(x,h_dec_prev):
-    Fx,Fy,gamma=attn_window("read",h_dec_prev,read_n)
+    Fx,Fy,gamma, params=attn_window("read",h_dec_prev,read_n)
     def filter_img(img,Fx,Fy,gamma,N):
         Fxt=tf.transpose(Fx,perm=[0,2,1])
         img=tf.reshape(img,[-1,dims[1],dims[0]])
@@ -102,7 +107,7 @@ def read(x,h_dec_prev):
         glimpse=tf.reshape(glimpse,[-1,N*N])
         return glimpse*tf.reshape(gamma,[-1,1])
     x=filter_img(x,Fx,Fy,gamma,read_n) # batch x (read_n*read_n)
-    return tf.concat(1,[x]) # concat along feature axis
+    return tf.concat(1,[x]), params # concat along feature axis
 
 
 
@@ -136,10 +141,11 @@ outputs=[0] * glimpses
 h_dec_prev=tf.zeros((batch_size,dec_size))
 enc_state=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
-
+parameters_choices = []
 
 for glimpse in range(glimpses):
-    r=read(x,h_dec_prev)
+    r, parameters=read(x,h_dec_prev)
+    parameters_choices.append(parameters)
     with tf.variable_scope("encoder", reuse=REUSE):
         h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev]), enc_state)
     
@@ -211,7 +217,7 @@ train_op=optimizer.apply_gradients(grads)
 
 varsToTrain = []
 
-if str2bool(sys.argv[1]):
+if True: #str2bool(sys.argv[1]):
     
     with tf.variable_scope("read",reuse=True):
         w = tf.get_variable("w")
@@ -221,7 +227,7 @@ if str2bool(sys.argv[1]):
 
 
 
-if str2bool(sys.argv[2]):
+if True: #str2bool(sys.argv[2]):
     
     with tf.variable_scope("encoder/LSTMCell",reuse=True):
         w = tf.get_variable("W_0")
@@ -232,7 +238,7 @@ if str2bool(sys.argv[2]):
 
 
 
-if str2bool(sys.argv[3]):
+if True: #str2bool(sys.argv[3]):
     
     with tf.variable_scope("z",reuse=True):
         w = tf.get_variable("w")
@@ -242,7 +248,7 @@ if str2bool(sys.argv[3]):
 
 
 
-if str2bool(sys.argv[4]):
+if True: #str2bool(sys.argv[4]):
     
     with tf.variable_scope("decoder/LSTMCell",reuse=True):
         w = tf.get_variable("W_0")
@@ -252,7 +258,7 @@ if str2bool(sys.argv[4]):
 
 
 
-if str2bool(sys.argv[5]):
+if True: #str2bool(sys.argv[5]):
     
     with tf.variable_scope("hidden1",reuse=True):
         w = tf.get_variable("w")
@@ -261,7 +267,7 @@ if str2bool(sys.argv[5]):
         varsToTrain.append(b)
 
 
-if str2bool(sys.argv[6]):
+if True: #str2bool(sys.argv[6]):
     
     with tf.variable_scope("hidden2",reuse=True):
         w = tf.get_variable("w")
@@ -298,117 +304,79 @@ else:
     train_op2=optimizer2.apply_gradients(grads2b)
 
 
-if pretrain:
+if not os.path.exists("mnist"):
+    os.makedirs("mnist")
+train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
 
 
-    if not os.path.exists("mnist"):
-        os.makedirs("mnist")
-    train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
-
-    fetches=[]
-    fetches.extend([reconstruction_loss,train_op])
-    reconstruction_lossses=[0]*pretrain_iters
-
-
-
-    sess=tf.InteractiveSession()
-
-
+sess = tf.Session()
+saver = tf.train.Saver()
+with sess.as_default():
     tf.initialize_all_variables().run()
-    if pretrain_restore:
-        saver = tf.train.Saver(tf.all_variables())
-        saver.restore(sess, load_file)
+saver.restore(sess, "translatedplain/classifymodel_from_80000_0.ckpt")
 
 
-
-    start_time = time.clock()
-    extra_time = 0
-    for i in range(pretrain_iters):
-        xtrain, ytrain =train_data.next_batch(batch_size)
-        if translated:
-            xtrain = convertTranslated(xtrain)
-        
-        feed_dict={x:xtrain, onehot_labels:ytrain}
-        results=sess.run(fetches,feed_dict)
-        reconstruction_lossses[i],_=results
-        if i%100==0:
-            print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
-            if i %1000==0:
-                start_evaluate = time.clock()
-                evaluate()
-                saver = tf.train.Saver(tf.all_variables())
-                print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
-                extra_time = extra_time + time.clock() - start_evaluate
-                print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
-    
-
-
-
-
-    canvases=sess.run(outputs,feed_dict)
-    canvases=np.array(canvases)
-
-    np.save(draw_file,[canvases,reconstruction_lossses])
-    print("Outputs saved in file: %s" % draw_file)
-
-
-
-    print("FINISHED PRE-TRAINING")
-
-
-if classify:
-    sess=tf.InteractiveSession()
-    
-    saver = tf.train.Saver()
+sess2 = tf.Session()
+saver2 = tf.train.Saver()
+with sess2.as_default():
     tf.initialize_all_variables().run()
-    if restore:
-        saver.restore(sess, load_file)
+#saver.restore(sess2, "translatedplain/classifymodel_from_scratch_100000.ckpt")
+    saver.restore(sess2, "translatedplain/classifymodel_from_80000_40000.ckpt")
 
 
-    if start_non_restored_from_random:
-        tf.initialize_variables(varsToTrain).run()
+xtrain, ytrain =train_data.next_batch(batch_size)
+if translated:
+    xtrain = convertTranslated(xtrain)
+    
+feed_dict={x:xtrain, onehot_labels:ytrain}
+results=sess.run(h_dec,feed_dict)
+results2 = sess2.run(h_dec, feed_dict)
+hidden_fetched =np.reshape(results, [-1])
+hidden_fetched2 = np.reshape(results2, [-1])
+
+print(results)
+
+print(np.dot(hidden_fetched, hidden_fetched2) / (np.linalg.norm(hidden_fetched) * np.linalg.norm(hidden_fetched2)))
+
+print(np.linalg.norm(hidden_fetched - hidden_fetched2))
 
 
+sum = 0
+norm1Squared = 0
+norm2Squared = 0
+distSquared = 0
+
+for v in varsToTrain:
+    v1 = sess.run(tf.reshape(v, [-1]))
+    v2 = sess2.run(tf.reshape(v, [-1]))
+    print(v.name)
+    #print(np.linalg.norm(v1-v2) / np.sqrt(np.linalg.norm(v1) * np.linalg.norm(v2)))
+    print(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
+    sum = sum + np.dot(v1, v2)
+    norm1Squared = norm1Squared + np.square(np.linalg.norm(v1))
+    norm2Squared = norm2Squared + np.square(np.linalg.norm(v2))
+    distSquared = distSquared + np.square(np.linalg.norm(v1-v2))
+
+print(sum / np.sqrt(norm1Squared * norm2Squared))
+print(np.sqrt(distSquared))
 
 
-    if not os.path.exists("mnist"):
-        os.makedirs("mnist")
-    train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
-    fetches2=[]
-    fetches2.extend([reward,train_op2])
+'''
+for v in varsToTrain:
+    v1 = sess.run(tf.reshape(v, [-1]))
+    v2 = sess2.run(tf.reshape(v, [-1]))
+    #print(v.name)
+    sum = sum + np.dot(v1, v2)
+    distSquared = distSquared + np.square(np.linalg.norm(v1-v2))
+    norm1Squared = norm1Squared + np.square(np.linalg.norm(v1))
+    norm2Squared = norm2Squared + np.square(np.linalg.norm(v2))
+
+print(sum / np.sqrt(norm1Squared * norm2Squared))
+#print(np.sqrt(distSquared))
 
 
-    start_time = time.clock()
-    extra_time = 0
-
-    for i in range(train_iters):
-        xtrain, ytrain =train_data.next_batch(batch_size)
-        if translated:
-            xtrain = convertTranslated(xtrain)
-        feed_dict={x:xtrain, onehot_labels:ytrain}
-        results=sess.run(fetches2,feed_dict)
-        reward_fetched,_=results
-        if i%100==0:
-            print("iter=%d : Reward: %f" % (i, reward_fetched))
-            if i %1000==0:
-                start_evaluate = time.clock()
-                test_accuracy = evaluate()
-                #saver = tf.train.Saver(tf.all_variables())
-                #print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
-                extra_time = extra_time + time.clock() - start_evaluate
-                print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
-                if i == 0:
-                    log_file = open(log_filename, 'w')
-                else:
-                    log_file = open(log_filename, 'a')
-                log_file.write(str(time.clock() - start_time - extra_time) + "," + str(test_accuracy) + "\n")
-                log_file.close()
-
-
-
-
-
+'''
 
 
 sess.close()
-
+sess2.close()

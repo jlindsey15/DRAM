@@ -85,6 +85,7 @@ def filterbank(gx, gy, sigma2,delta, N):
 def attn_window(scope,h_dec,N):
     with tf.variable_scope(scope,reuse=REUSE):
         params=linear(h_dec,5)
+        params=tf.random_uniform(shape=params.get_shape(), minval = -1, maxval = 1)
     gx_,gy_,log_sigma2,log_delta,log_gamma=tf.split(1,5,params)
     gx=(dims[0]+1)/2*(gx_+1)
     gy=(dims[1]+1)/2*(gy_+1)

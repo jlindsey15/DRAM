@@ -51,6 +51,7 @@ start_non_restored_from_random = False
 REUSE=None
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
+reconstruct = tf.placeholder(tf.float32,shape=(batch_size,28*28))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
@@ -156,7 +157,7 @@ for glimpse in range(glimpses):
         h_dec, dec_state = lstm_dec(z, dec_state)
 
     with tf.variable_scope("write", reuse=REUSE):
-        outputs[glimpse] = linear(h_dec, img_size)
+        outputs[glimpse] = linear(h_dec, 28*28)
     h_dec_prev=h_dec
     REUSE=True
 
@@ -198,7 +199,7 @@ def evaluate():
 
 x_recons=tf.nn.sigmoid(outputs[-1])
 
-reconstruction_loss=tf.reduce_sum(binary_crossentropy(x,x_recons),1)
+reconstruction_loss=tf.reduce_sum(binary_crossentropy(reconstruct,x_recons),1)
 reconstruction_loss=tf.reduce_mean(reconstruction_loss)
 
 
@@ -321,7 +322,7 @@ saver2 = tf.train.Saver()
 with sess2.as_default():
     tf.initialize_all_variables().run()
 #saver.restore(sess2, "translatedplain/classifymodel_from_scratch_100000.ckpt")
-    saver.restore(sess2, "translatedplain/classifymodel_from_scratch_120000_40000.ckpt")
+    saver.restore(sess2, "translatedplain/classifymodel_canonical_from_120000_40000.ckpt")
 
 
 xtrain, ytrain =train_data.next_batch(batch_size)

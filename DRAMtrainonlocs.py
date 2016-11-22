@@ -27,7 +27,7 @@ read_n = 5
 read_size = read_n*read_n
 z_size=10
 glimpses=10
-batch_size=1000
+batch_size=100
 enc_size = 256
 dec_size = 256
 pretrain_iters=10000000
@@ -203,11 +203,10 @@ def evaluate():
 
 x_recons=tf.nn.sigmoid(outputs[-1])
 
-reconstruction_loss=tf.reduce_sum(binary_crossentropy(x,x_recons),1)
-reconstruction_loss=tf.reduce_mean(reconstruction_loss)
+reconstruction_loss= loc_dist
 
 
-predcost = -predquality
+predcost = -predquality + 0.001 * loc_dist
 
 
 ##################
@@ -344,7 +343,7 @@ if pretrain:
         reconstruction_lossses[i],_=results
         if i%100==0:
             print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
-            if i %1000==0:
+            if i %100==0:
                 start_evaluate = time.clock()
                 evaluate()
                 saver = tf.train.Saver(tf.all_variables())

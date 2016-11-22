@@ -38,7 +38,7 @@ pretrain = str2bool(sys.argv[11]) #False
 classify = str2bool(sys.argv[12]) #True
 pretrain_restore = False
 restore = str2bool(sys.argv[14]) #True
-rigid_pretrain = True
+rigid_pretrain = False
 log_filename = sys.argv[7] #"translatedplain/classify_weird_from_20000_log.csv"
 load_file = sys.argv[8] #"translatedplain/drawmodel20000.ckpt"
 save_file = sys.argv[9] #"translatedplain/classifymodel_weird_from_20000_"
@@ -319,6 +319,13 @@ if pretrain:
         saver = tf.train.Saver(tf.all_variables())
         saver.restore(sess, load_file)
 
+    saver = tf.train.Saver(tf.all_variables())
+    print('hi')
+    saver.restore(sess, "drawmodels/drawmodel8000.ckpt")
+    
+    
+    saver2 = tf.train.Saver(var_list = varsToTrain)
+    saver2.restore(sess, "drawmodels/drawmodel12000.ckpt")
 
 
     start_time = time.clock()
@@ -361,8 +368,12 @@ if classify:
     
     saver = tf.train.Saver()
     tf.initialize_all_variables().run()
-    if restore:
-        saver.restore(sess, load_file)
+    saver.restore(sess, "drawmodels/drawmodel8000.ckpt")
+
+
+    saver2 = tf.train.Saver(var_list = varsToTrain)
+    saver.restore(sess, "drawmodels/drawmodel12000.ckpt")
+
 
 
     if start_non_restored_from_random:

@@ -51,6 +51,7 @@ start_non_restored_from_random = str2bool(sys.argv[15])
 REUSE=None
 
 x = tf.placeholder(tf.float32,shape=(batch_size,img_size))
+reconstruct = tf.placeholder(tf.float32,shape=(batch_size,28*28))
 onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
@@ -150,7 +151,7 @@ for glimpse in range(glimpses):
         h_dec, dec_state = lstm_dec(z, dec_state)
 
     with tf.variable_scope("write", reuse=REUSE):
-        outputs[glimpse] = linear(h_dec, img_size)
+        outputs[glimpse] = linear(h_dec, 28*28)
     h_dec_prev=h_dec
     REUSE=True
 
@@ -179,8 +180,8 @@ def evaluate():
     for i in xrange(batches_in_epoch):
         nextX, nextY = data.next_batch(batch_size)
         if translated:
-            nextX = convertTranslated(nextX)
-        feed_dict = {x: nextX, onehot_labels:nextY}
+            nextXTrans = convertTranslated(nextX)
+        feed_dict = {x: nextXTrans, reconstruct: nextX, onehot_labels:nextY}
         r = sess.run(reward, feed_dict=feed_dict)
         accuracy += r
     
@@ -192,7 +193,7 @@ def evaluate():
 
 x_recons=tf.nn.sigmoid(outputs[-1])
 
-reconstruction_loss=tf.reduce_sum(binary_crossentropy(x,x_recons),1)
+reconstruction_loss=tf.reduce_sum(binary_crossentropy(reconstruct,x_recons),1)
 reconstruction_loss=tf.reduce_mean(reconstruction_loss)
 
 
@@ -326,9 +327,9 @@ if pretrain:
     for i in range(pretrain_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            xtrain = convertTranslated(xtrain)
+            nextXTrans = convertTranslated(xtrain)
         
-        feed_dict={x:xtrain, onehot_labels:ytrain}
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches,feed_dict)
         reconstruction_lossses[i],_=results
         if i%100==0:
@@ -384,8 +385,8 @@ if classify:
     for i in range(train_iters):
         xtrain, ytrain =train_data.next_batch(batch_size)
         if translated:
-            xtrain = convertTranslated(xtrain)
-        feed_dict={x:xtrain, onehot_labels:ytrain}
+            nextXTrans = convertTranslated(xtrain)
+        feed_dict={x:nextXTrans, reconstruct:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches2,feed_dict)
         reward_fetched,_=results
         if i%100==0:

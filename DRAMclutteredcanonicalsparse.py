@@ -231,6 +231,9 @@ for glimpse in range(glimpses):
     h_dec_prev=h_dec
     REUSE=True
 
+l1_cost = 10 * tf.reduce_sum(tf.abs(h_dec))
+
+
 with tf.variable_scope("hidden1",reuse=None):
     hidden = tf.nn.relu(linear(h_dec_prev, 256))
 with tf.variable_scope("hidden2",reuse=None):
@@ -270,7 +273,7 @@ def evaluate():
 x_recons=tf.nn.sigmoid(outputs[-1])
 
 reconstruction_loss=tf.reduce_sum(binary_crossentropy(reconstruct,x_recons),1)
-reconstruction_loss=tf.reduce_mean(reconstruction_loss)
+reconstruction_loss=tf.reduce_mean(reconstruction_loss) + l1_cost
 
 
 predcost = -predquality

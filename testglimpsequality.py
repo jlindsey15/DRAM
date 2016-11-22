@@ -9,6 +9,7 @@ import os
 import random
 from scipy import misc
 import time
+import sys
 
 tf.flags.DEFINE_string("data_dir", "", "")
 tf.flags.DEFINE_boolean("write_attn",False, "enable attention for writer")
@@ -41,8 +42,8 @@ classify = True
 pretrain_restore = False
 restore = True
 rigid_pretrain = False
-log_filename = "translatedplain/second_test_gq_8000_log.csv"
-load_file = "translatedplain/drawmodel_2_8000.ckpt"
+log_filename = sys.argv[1]
+load_file = sys.argv[2]
 save_file = "translatedplain/second_test_gq_8000_"
 draw_file = "translatedplain/zzzdraw_data_5000.npy"
 read_hist = []
@@ -378,11 +379,12 @@ for i in range(train_iters):
     if i%100==0:
         print("iter=%d : Reward: %f" % (i, reward_fetched))
         if i %1000==0:
+            print(log_filename)
             start_evaluate = time.clock()
             test_accuracy = evaluate()
             saver = tf.train.Saver(tf.all_variables()) # saves variables learned during training
-            ckpt_file=os.path.join(FLAGS.data_dir, save_file + str(i) + ".ckpt")
-            print("Model saved in file: %s" % saver.save(sess,ckpt_file))
+            #ckpt_file=os.path.join(FLAGS.data_dir, save_file + str(i) + ".ckpt")
+            #print("Model saved in file: %s" % saver.save(sess,ckpt_file))
             extra_time = extra_time + time.clock() - start_evaluate
             print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
             if i == 0:

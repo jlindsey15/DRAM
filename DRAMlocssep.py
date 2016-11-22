@@ -144,12 +144,13 @@ def dense_to_one_hot(labels_dense, num_classes=10):
 
 outputs=[0] * glimpses
 h_dec_prev=tf.zeros((batch_size,dec_size))
+h_enc_prev=tf.zeros((batch_size,enc_size))
 enc_state=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
 
 loc_dist = tf.constant(0.0, shape=())
 for glimpse in range(glimpses):
-    r, chosen_locs=read(x,h_dec_prev)
+    r, chosen_locs=read(x,h_enc_prev)
     loc_dist = loc_dist + (tf.reduce_mean(norm(chosen_locs - locations, reduction_indices = 1), 0))
     
     with tf.variable_scope("encoder", reuse=REUSE):
@@ -164,6 +165,7 @@ for glimpse in range(glimpses):
     with tf.variable_scope("write", reuse=REUSE):
         outputs[glimpse] = linear(h_dec, img_size)
     h_dec_prev=h_dec
+    h_enc_prev = h_enc
     REUSE=True
 
 with tf.variable_scope("hidden1",reuse=None):

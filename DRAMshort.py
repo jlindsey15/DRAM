@@ -138,24 +138,8 @@ enc_state=lstm_enc.zero_state(batch_size, tf.float32)
 dec_state=lstm_dec.zero_state(batch_size, tf.float32)
 
 
-for glimpse in range(glimpses):
-    r=read(x,h_dec_prev)
-    with tf.variable_scope("encoder", reuse=REUSE):
-        h_enc, enc_state = lstm_enc(tf.concat(1,[r,h_dec_prev]), enc_state)
-    
-    with tf.variable_scope("z",reuse=REUSE):
-        z=linear(h_enc,z_size)
-
-    with tf.variable_scope("decoder", reuse=REUSE):
-        h_dec, dec_state = lstm_dec(z, dec_state)
-
-    with tf.variable_scope("write", reuse=REUSE):
-        outputs[glimpse] = linear(h_dec, img_size)
-    h_dec_prev=h_dec
-    REUSE=True
-
 with tf.variable_scope("hidden1",reuse=None):
-    hidden = tf.nn.relu(linear(h_dec_prev, 256))
+    hidden = tf.nn.relu(linear(x, 256))
 with tf.variable_scope("hidden2",reuse=None):
     classification = tf.nn.softmax(linear(hidden, 10))
 predquality = tf.log(classification + 1e-5) * onehot_labels

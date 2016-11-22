@@ -55,6 +55,12 @@ onehot_labels = tf.placeholder(tf.float32, shape=(batch_size, 10))
 lstm_enc = tf.nn.rnn_cell.LSTMCell(enc_size, read_size+dec_size) # encoder Op
 lstm_dec = tf.nn.rnn_cell.LSTMCell(dec_size, z_size) # decoder Op
 
+
+def norm_sq(tensor, reduction_indices = None, name = None):
+    squared_tensor = tf.square(tensor)
+    euclidean_norm_sq = (tf.reduce_sum(squared_tensor, tf.cast(reduction_indices, tf.int32)))
+    return euclidean_norm_sq
+
 def linear(x,output_dim):
     """
     affine transformation Wx+b
@@ -199,6 +205,34 @@ reconstruction_loss=tf.reduce_mean(reconstruction_loss)
 predcost = -predquality
 
 
+reconstruction_grad_norm = tf.zeros(shape=[1])
+prediction_grad_norm = tf.zeros(shape=[1])
+rp_correlation = tf.zeros(shape=[1])
+
+for v in tf.trainable_variables():
+
+    grad_reconstruction = tf.gradients(reconstruction_loss, v)
+    grad_prediction = tf.gradients(predcost, v)
+    try:
+        rp_correlation = rp_correlation + tf.reduce_sum(tf.mul(grad_reconstruction[0], grad_prediction[0]))
+    except:
+        1+1
+    try:
+        reconstruction_grad_norm = reconstruction_grad_norm + tf.reduce_sum(tf.square(grad_reconstruction[0]))
+    except:
+        1+1
+    try:
+        prediction_grad_norm = prediction_grad_norm + tf.reduce_sum(tf.square(grad_prediction[0]))
+    except:
+        1+1
+
+
+reconstruction_grad_norm = tf.sqrt(reconstruction_grad_norm)
+prediction_grad_norm = tf.sqrt(prediction_grad_norm)
+
+
+
+
 ##################
 
 
@@ -306,7 +340,7 @@ if pretrain:
     train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
 
     fetches=[]
-    fetches.extend([reconstruction_loss,train_op])
+    fetches.extend([reconstruction_loss, prediction_grad_norm, reconstruction_grad_norm, rp_correlation,  train_op])
     reconstruction_lossses=[0]*pretrain_iters
 
 
@@ -330,16 +364,22 @@ if pretrain:
         
         feed_dict={x:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches,feed_dict)
-        reconstruction_lossses[i],_=results
-        if i%100==0:
+        reconstruction_lossses[i], pred_grad_norm_fetched, reconstr_grad_norm_fetched, rp_corr_fetched, _=results
+        if i%1==0:
             print("iter=%d : Reconstr. Loss: %f " % (i,reconstruction_lossses[i]))
+            print("pred grad norm: %f  reconst grad norm: %f rp corr: %f " % (pred_grad_norm_fetched,reconstr_grad_norm_fetched, rp_corr_fetched))
+            if i == 0:
+                log_file = open(log_filename, 'w')
+            else:
+                log_file = open(log_filename, 'a')
+            log_file.write(str(time.clock() - start_time - extra_time) + "," + str(reconstruction_lossses[i]) + "," + str(pred_grad_norm_fetched[0]) + "," + str(reconstr_grad_norm_fetched[0]) + "," + str(rp_corr_fetched[0]) + "\n")
             if i %1000==0:
                 start_evaluate = time.clock()
-                evaluate()
                 saver = tf.train.Saver(tf.all_variables())
                 print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
                 extra_time = extra_time + time.clock() - start_evaluate
                 print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
+            log_file.close()
     
 
 
@@ -375,7 +415,7 @@ if classify:
         os.makedirs("mnist")
     train_data = mnist.input_data.read_data_sets("mnist", one_hot=True).train
     fetches2=[]
-    fetches2.extend([reward,train_op2])
+    fetches2.extend([reward, prediction_grad_norm, reconstruction_grad_norm, rp_correlation,  train_op2])
 
 
     start_time = time.clock()
@@ -387,22 +427,23 @@ if classify:
             xtrain = convertTranslated(xtrain)
         feed_dict={x:xtrain, onehot_labels:ytrain}
         results=sess.run(fetches2,feed_dict)
-        reward_fetched,_=results
-        if i%100==0:
+        reward_fetched, pred_grad_norm_fetched, reconstr_grad_norm_fetched, rp_corr_fetched, _=results
+        if i%1==0:
             print("iter=%d : Reward: %f" % (i, reward_fetched))
-            if i %1000==0:
+            print("pred grad norm: %f  reconst grad norm: %f rp corr: %f " % (pred_grad_norm_fetched, reconstr_grad_norm_fetched, rp_corr_fetched))
+            if i%1000==0:
                 start_evaluate = time.clock()
                 test_accuracy = evaluate()
                 saver = tf.train.Saver(tf.all_variables())
                 print("Model saved in file: %s" % saver.save(sess, save_file + str(i) + ".ckpt"))
                 extra_time = extra_time + time.clock() - start_evaluate
                 print("--- %s CPU seconds ---" % (time.clock() - start_time - extra_time))
-                if i == 0:
-                    log_file = open(log_filename, 'w')
-                else:
-                    log_file = open(log_filename, 'a')
-                log_file.write(str(time.clock() - start_time - extra_time) + "," + str(test_accuracy) + "\n")
-                log_file.close()
+            if i == 0:
+                log_file = open(log_filename, 'w')
+            else:
+                log_file = open(log_filename, 'a')
+            log_file.write(str(time.clock() - start_time - extra_time) + "," + str(test_accuracy) + "," + str(pred_grad_norm_fetched[0]) + "," + str(reconstr_grad_norm_fetched[0]) + "," + str(rp_corr_fetched[0]) + "\n")
+            log_file.close()
 
 
 
